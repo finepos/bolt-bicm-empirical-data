@@ -49,6 +49,8 @@ Confirms "BECM master required" hypothesis from prior community discussion ([Bat
 | `09_cell_min_voltage_histogram.csv` | 18 | 49 days | Distribution of pack min cell voltage in 50 mV bins |
 | `10_recovery_event_2026-05-09_trace.csv` | 242 | 2 h | High-resolution trace of recovery from deep-discharge event (cell delta 148 → 35 mV) |
 | `11_hourly_pack_aggregates.csv` | 835 | 49 days | Hourly averages of cell voltages, current, voltage, temperatures |
+| `12_can_log_bms_bus_60s_raw.csv` | 31,800 | 60 s | **Raw CAN bus capture** (CAN-FD, 500 kbps): every frame on the BICM-side bus during a 60-second window. Hex payloads, decoded timestamps, direction (rx from BICM / tx from polling node), DLC, frame format flags. Standard candump-compatible columns. |
+| `13_can_id_inventory_summary.csv` | 31 | 60 s | Per-CAN-ID aggregate from dataset 12: hex ID, direction, frame count, average frequency (Hz), average period (ms), first observed payload bytes. |
 
 ## UDS PID raw responses — observations needing community decoding
 
@@ -67,11 +69,36 @@ Polled on UDS service 0x22 (ReadDataByIdentifier) at `0x7E7` request → `0x7EF`
 
 Each row in `02_uds_pid_responses_raw.csv` carries the raw bytes/decoded integer per PID with a UTC timestamp.
 
+## CAN bus inventory (from dataset 13)
+
+Standalone BICM emits the following CAN frames during steady-state idle operation (60 s capture, 31 distinct IDs):
+
+| ID | Direction | Frequency | DLC | Notes |
+|---|---|---|---|---|
+| 0x091 | rx | 1.20 Hz | 8 | unknown — undocumented in upstream |
+| 0x0D1 | rx | 1.18 Hz | 8 | unknown |
+| 0x111 | rx | 1.20 Hz | 8 | unknown |
+| 0x200, 0x202, 0x204, 0x206, 0x208 | rx | 40 Hz each | 8 | Cell voltage matrix (multiplexed) |
+| 0x20C | rx | 40 Hz | 6 | VITM Status HV |
+| 0x216 | rx | 40 Hz | 7 | Sensed voltage / current |
+| 0x260, 0x262 | rx | 20 Hz | 8/3 | Diagnostic status |
+| **0x270, 0x272, 0x274** | rx | 20 Hz | 8/8/2 | **BalancingSwitches diagnostic** — primary candidate for community decoding |
+| 0x2C7 | rx | 40 Hz | 6 | Pack voltage |
+| 0x302 | rx | 10 Hz | 8 | Module temperatures |
+| 0x308 | rx | 10 Hz | 5 | unknown |
+| 0x3E3 | rx | 10 Hz | 7 | min/max values |
+| 0x460 | rx | 4 Hz | 4 | Coolant inlet/outlet temps |
+| 0x7EF | rx | 10 Hz | 8 | UDS responses to 0x7E7 polls |
+
+Full per-frame raw payloads in dataset 12. See `13_can_id_inventory_summary.csv` for first-seen payload bytes per ID.
+
 ## Open questions for the community
 
-1. **Decode `0x4323-0x4327` and `0x4340`** (HYBRID_CELL_BALANCING_ID 1-6) — Battery-Emulator declares them as poll-able PIDs but no public interpretation exists. Not yet polled in this dataset. Adding them is straightforward firmware change for any researcher with similar hardware.
+1. **Decode `0x270`, `0x272`, `0x274` BalancingSwitches frames** — these emit at 20 Hz but interpretation is unknown. Initial payload samples in dataset 13 (`0x270 = 4B4B4B484B4B4B48`, `0x272 = 4848484848484848`, `0x274 = 4848`) — appear to be repeating byte patterns suggesting some kind of cell-state bitfield. Decoding this would directly answer "is BICM signalling balancing intent."
 
-2. **Inspect `0x270` BalancingSwitches frame** — codebase comment says "Battery VoltageSensor BalancingSwitches diagnostic status". Does this frame change behavior during extreme-delta events? Requires raw CAN-frame capture (not in this telemetry-derived dataset).
+2. **Decode `0x4323-0x4327` and `0x4340`** (HYBRID_CELL_BALANCING_ID 1-6) — Battery-Emulator declares them as poll-able PIDs but no public interpretation exists. Not yet polled in this dataset. Adding them is straightforward firmware change for any researcher with similar hardware.
+
+3. **Decode unknown periodic frames** `0x091`, `0x0D1`, `0x111`, `0x308` — 1.2-10 Hz cadence, undocumented in Battery-Emulator. Could be sensor data, status flags, or BICM internal state.
 
 3. **Resolve `0x40D4` interpretation** — what does it actually return if not instantaneous current? Multi-pack comparison would help.
 
@@ -156,5 +183,6 @@ Issues welcome. Particularly helpful:
 
 ## Changelog
 
+- 2026-05-11 — Added datasets 12 (raw 60 s CAN bus capture, 31,800 frames) + 13 (per-CAN-ID inventory summary). Provides actual frame-level data including periodic BalancingSwitches frames `0x270`/`0x272`/`0x274`.
 - 2026-05-11 — Cleanup release: stripped all derived/processed columns, retaining only raw battery observations and raw UDS PID responses.
 - 2026-05-10 — Initial release.
